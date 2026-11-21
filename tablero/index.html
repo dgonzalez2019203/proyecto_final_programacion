@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NovaBank · Tablero en vivo</title>
+<!-- Tablero del MVP. Lo sirve la API (uvicorn api.main:app) en http://localhost:8000/tablero.
+     Lee la zona Gold de SQLite en cada cambio: no usa librerías externas, así funciona sin internet. -->
+<style>
+  :root {
+    --fondo: #f2f4f2; --tarjeta: #ffffff; --tinta: #1d2a22; --gris: #5f6b64; --linea: #dfe5e0;
+    --cabecera: #1f4d36; --verde: #388e3c; --verde-osc: #2e7d32; --azul: #00838f; --ambar: #ffb300; --rojo: #d32f2f;
+    --suave: #c8e6c9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--tinta); font: 14px/1.4 "Segoe UI", Roboto, Arial, sans-serif; }
+  header { background: var(--cabecera); color: #fff; padding: 14px 28px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  header h1 { font-size: 21px; font-weight: 400; margin: 0; flex: 1; min-width: 260px; }
+  .vivo { font-size: 12.5px; display: flex; align-items: center; gap: 8px; opacity: .95; }
+  .punto { width: 10px; height: 10px; border-radius: 50%; background: #7CFC8A; box-shadow: 0 0 0 0 rgba(124,252,138,.7); animation: pulso 2s infinite; }
+  .punto.espera { background: var(--ambar); animation: none; }
+  .punto.error { background: #ff6b6b; animation: none; }
+  @keyframes pulso { 0% { box-shadow: 0 0 0 0 rgba(124,252,138,.7); } 70% { box-shadow: 0 0 0 9px rgba(124,252,138,0); } 100% { box-shadow: 0 0 0 0 rgba(124,252,138,0); } }
+  nav { display: flex; gap: 4px; padding: 0 28px; background: #fff; border-bottom: 1px solid var(--linea); }
+  nav button { border: 0; background: none; padding: 12px 16px; font: inherit; color: var(--gris); cursor: pointer; border-bottom: 3px solid transparent; }
+  nav button.activa { color: var(--cabecera); border-bottom-color: var(--verde); font-weight: 600; }
+  main { padding: 18px 28px 30px; max-width: 1500px; margin: 0 auto; }
+  .pagina { display: none; } .pagina.activa { display: block; }
+  .filtros { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+  select, input { font: inherit; padding: 8px 10px; border: 1px solid var(--linea); border-radius: 8px; background: #fff; color: var(--tinta); min-width: 170px; }
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 18px; }
+  .kpis.k5 { grid-template-columns: repeat(5, 1fr); }
+  .kpis.k4 { grid-template-columns: repeat(4, 1fr); }
+  .kpi { background: var(--tarjeta); border: 1px solid var(--linea); border-radius: 12px; padding: 14px 18px; transition: background .6s; }
+  .kpi .et { color: var(--gris); font-size: 13px; }
+  .kpi .v { font-size: 30px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { color: var(--gris); font-size: 12px; margin-top: 2px; min-height: 16px; }
+  .kpi.cambio { background: #fff6d6; }
+  .kpi.destacado { border-color: var(--verde); }
+  .fila { display: grid; gap: 18px; margin-bottom: 18px; }
+  .f-1-2 { grid-template-columns: 1fr 2fr; } .f-2-1 { grid-template-columns: 2fr 1fr; } .f-1 { grid-template-columns: 1fr; }
+  h2 { font-size: 17px; font-weight: 400; color: var(--cabecera); margin: 0 0 8px; }
+  .caja { background: var(--tarjeta); border: 1px solid var(--linea); border-radius: 12px; padding: 14px 16px; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font: 11px "Segoe UI", Roboto, Arial, sans-serif; fill: var(--gris); }
+  .leyenda { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; margin-bottom: 6px; }
+  .leyenda i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: var(--verde-osc); color: #fff; text-align: left; padding: 8px 10px; font-weight: 600; }
+  thead th:first-child { border-top-left-radius: 8px; } thead th:last-child { border-top-right-radius: 8px; }
+  tbody td { padding: 7px 10px; border-bottom: 1px solid #eef1ee; vertical-align: top; }
+  tbody td:first-child { white-space: nowrap; }
+  tbody tr:nth-child(even) { background: #f8faf8; }
+  .chip { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 11.5px; font-weight: 600; }
+  .chip.enviada { background: var(--suave); color: #1b5e20; } .chip.pendiente { background: #fff0c2; color: #8a5a00; }
+  .chip.Oferta { background: #e3f1e4; color: #1b5e20; } .chip.Educación { background: #dff3f5; color: #00646d; }
+  .chip.Retención { background: #fff0c2; color: #8a5a00; } .chip.Seguridad { background: #fde2e2; color: #a31515; }
+  .nota { color: var(--gris); font-size: 12.5px; margin-top: 10px; }
+  .feed { max-height: 360px; overflow: auto; }
+  .feed div { border-bottom: 1px solid #eef1ee; padding: 7px 2px; font-size: 12.5px; }
+  .feed div.nuevo { background: #fff6d6; }
+  .feed b { font-weight: 600; } .feed small { color: var(--gris); display: block; }
+  .banner { background: var(--suave); border: 1px solid #a5d6a7; border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; }
+  .banner .et { color: var(--gris); font-size: 13px; } .banner .v { font-size: 25px; margin-top: 4px; }
+  .banner.Seguridad { background: #fde2e2; border-color: #f2b8b8; } .banner.Retención { background: #fff0c2; border-color: #f5d77a; }
+  .banner.Educación { background: #dff3f5; border-color: #a7dde2; }
+  .toast { position: fixed; right: 22px; bottom: 22px; background: var(--cabecera); color: #fff; padding: 12px 18px; border-radius: 10px;
+           box-shadow: 0 6px 20px rgba(0,0,0,.2); opacity: 0; transform: translateY(12px); transition: all .35s; pointer-events: none; max-width: 380px; }
+  .toast.ver { opacity: 1; transform: none; }
+  .vacio { color: var(--gris); text-align: center; padding: 18px; }
+  button.peq { font: inherit; font-size: 12.5px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--linea); background: #fff; cursor: pointer; }
+  @media (max-width: 1100px) { .kpis, .kpis.k5, .kpis.k4 { grid-template-columns: repeat(2, 1fr); } .f-1-2, .f-2-1 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>NovaBank · MVP de hiperpersonalización · Datos 100 % sintéticos</h1>
+  <div class="vivo"><span class="punto espera" id="punto"></span><span id="estado">Conectando con la API…</span></div>
+</header>
+<nav>
+  <button class="activa" data-p="resumen">Resumen</button>
+  <button data-p="cliente">Cliente 360</button>
+  <button data-p="modelos">Modelos y fraude</button>
+</nav>
+<main>
+  <!-- ===================================================== RESUMEN -->
+  <section class="pagina activa" id="p-resumen">
+    <div class="filtros">
+      <select id="f-seg"><option value="">Segmento: todos</option></select>
+      <select id="f-dep"><option value="">Departamento: todos</option></select>
+      <select id="f-tipo"><option value="">Tipo de acción: todas</option></select>
+    </div>
+    <div class="kpis">
+      <div class="kpi" id="k-clientes"><div class="et">Clientes</div><div class="v">–</div><div class="sub"></div></div>
+      <div class="kpi" id="k-oferta"><div class="et">% con oferta</div><div class="v">–</div><div class="sub"></div></div>
+      <div class="kpi" id="k-acept"><div class="et">Aceptación media</div><div class="v">–</div><div class="sub">probabilidad estimada</div></div>
+      <div class="kpi" id="k-riesgo"><div class="et">Clientes en riesgo alto</div><div class="v">–</div><div class="sub">abandono a 60 días</div></div>
+      <div class="kpi" id="k-alertas"><div class="et">Alertas · últimos 30 días</div><div class="v">–</div><div class="sub"></div></div>
+      <div class="kpi destacado" id="k-enviadas"><div class="et">Acciones enviadas</div><div class="v">–</div><div class="sub"></div></div>
+    </div>
+    <div class="fila f-1">
+      <div><h2>Actividad diaria · alertas calculadas solo para los últimos 30 días</h2>
+        <div class="caja"><div class="leyenda"><span><i style="background:var(--verde)"></i>Monto diario (Q)</span><span><i style="background:var(--azul)"></i>Alertas de fraude</span></div><div id="g-diario"></div></div></div>
+    </div>
+    <div class="fila f-1-2">
+      <div><h2>Acción elegida por el motor</h2><div class="caja"><div id="g-dona"></div></div></div>
+      <div><h2>Ofertas por producto y canal</h2><div class="caja"><div class="leyenda" id="ley-canal"></div><div id="g-producto"></div></div></div>
+    </div>
+    <div class="fila f-2-1">
+      <div><h2>Acciones recomendadas <span style="font-size:13px;color:var(--gris)" id="t-total"></span></h2>
+        <div class="caja"><table><thead><tr><th>Cliente</th><th>Segmento</th><th>Acción</th><th>Recomendación</th><th>Prob. aceptación</th><th>Regla de decisión</th><th>Estado</th></tr></thead><tbody id="t-acciones"></tbody></table>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;align-items:center"><span class="nota" id="t-pag" style="margin:0"></span><button class="peq" id="t-ant">‹</button><button class="peq" id="t-sig">›</button></div></div></div>
+      <div><h2>Historial de acciones ejecutadas</h2><div class="caja feed" id="feed"></div></div>
+    </div>
+    <p class="nota">El motor prioriza Seguridad &gt; Retención &gt; Oferta &gt; Educación. Cada cliente recibe una sola acción y la regla que la explica.</p>
+  </section>
+
+  <!-- ===================================================== CLIENTE 360 -->
+  <section class="pagina" id="p-cliente">
+    <div class="filtros"><input id="c-id" list="c-lista" value="NB-000696" placeholder="cliente_id"><datalist id="c-lista"></datalist><button class="peq" id="c-ver">Ver cliente</button></div>
+    <div id="c-cuerpo"></div>
+  </section>
+
+  <!-- ===================================================== MODELOS Y FRAUDE -->
+  <section class="pagina" id="p-modelos">
+    <div class="kpis k4" id="m-kpis"></div>
+    <div class="fila f-1-2">
+      <div>
+        <h2>Alertas de fraude por decisión</h2><div class="caja" style="margin-bottom:18px"><div id="g-decision"></div></div>
+        <h2>Riesgo de abandono</h2><div class="caja"><div id="g-riesgo"></div></div>
+      </div>
+      <div>
+        <h2>Métricas de los modelos</h2><div class="caja" style="margin-bottom:18px"><table><thead><tr><th>Modelo</th><th>Algoritmo</th><th>Versión</th><th>Métrica</th><th>Valor</th></tr></thead><tbody id="t-metricas"></tbody></table></div>
+        <h2>Corridas del pipeline</h2><div class="caja"><table><thead><tr><th>Fecha y hora</th><th>Semilla</th><th>Clientes</th><th>Duración</th></tr></thead><tbody id="t-corridas"></tbody></table></div>
+      </div>
+    </div>
+    <div class="fila f-1"><div><h2>Detalle de alertas de fraude (las 10 de mayor anomalía)</h2><div class="caja"><table><thead><tr><th>Fecha y hora</th><th>Cliente</th><th>Monto (Q)</th><th>País</th><th>Anomalía</th><th>Decisión</th><th>Motivos</th></tr></thead><tbody id="t-alertas"></tbody></table></div></div></div>
+    <p class="nota">Métricas calculadas sobre datos sintéticos; con datos reales serán menores.</p>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "";                       // misma URL que la API
+const CANAL = { push_app: "Push en la app", asesor: "Asesor", email: "Correo", banner_app: "Banner en la app" };
+const COL_CANAL = { push_app: "#388e3c", asesor: "#00838f", email: "#ffb300", banner_app: "#d32f2f" };
+const TIPOS = ["Oferta", "Educación", "Retención", "Seguridad"];
+const COL_TIPO = { Oferta: "#388e3c", Educación: "#00838f", Retención: "#ffb300", Seguridad: "#d32f2f" };
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 0) => Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const fechaCorta = (f) => { const [a, m, d] = f.slice(0, 10).split("-"); return `${+d} ${MESES[+m - 1]}`; };
+
+let D = null, firma = null, pagina = 0, previos = {}, enviadasVistas = new Set(), primera = true;
+
+// ------------------------------------------------------------ navegación
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("activa", x === b));
+  document.querySelectorAll(".pagina").forEach((p) => p.classList.toggle("activa", p.id === "p-" + b.dataset.p));
+  history.replaceState(null, "", "#" + b.dataset.p);
+  if (b.dataset.p === "cliente") verCliente();
+});
+["f-seg", "f-dep", "f-tipo"].forEach((id) => $(id).onchange = () => { pagina = 0; dibujarResumen(); });
+$("t-ant").onclick = () => { if (pagina > 0) { pagina--; dibujarTabla(); } };
+$("t-sig").onclick = () => { pagina++; dibujarTabla(); };
+$("c-ver").onclick = verCliente;
+$("c-id").onkeydown = (e) => { if (e.key === "Enter") verCliente(); };
+
+// ------------------------------------------------------------ datos en vivo
+function estado(texto, clase) { $("estado").textContent = texto; $("punto").className = "punto " + (clase || ""); }
+function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("ver"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("ver"), 4000); }
+
+async function revisar() {
+  try {
+    const r = await fetch(API + "/tablero/estado", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const { firma: f } = await r.json();
+    if (f !== firma) await cargar(f);
+    else marcaVivo();
+  } catch (e) {
+    estado("Sin datos por ahora: ¿el pipeline está corriendo o la API está apagada? Reintentando…", "error");
+  }
+}
+async function cargar(f) {
+  const r = await fetch(API + "/tablero/datos", { cache: "no-store" });
+  if (!r.ok) throw new Error(r.status);
+  const nuevo = await r.json();
+  const corridaAntes = D && D.ejecuciones[0] && D.ejecuciones[0].ts;
+  const enviadasAntes = D ? D.enviadas_total : null;
+  D = nuevo; firma = f;
+  llenarFiltros(); dibujarResumen(); dibujarModelos();
+  if ($("p-cliente").classList.contains("activa")) verCliente();
+  if (!primera) {
+    const corrida = D.ejecuciones[0] && D.ejecuciones[0].ts;
+    if (corrida !== corridaAntes) toast(`Nueva corrida del pipeline (semilla ${D.ejecuciones[0].semilla}, ${fmt(D.ejecuciones[0].clientes)} clientes): datos recalculados.`);
+    else if (D.enviadas_total !== enviadasAntes) toast(`La automatización registró acciones nuevas: ${fmt(D.enviadas_total)} en total en gold_acciones_enviadas.`);
+    else toast("Datos actualizados.");
+  }
+  primera = false;
+  marcaVivo();
+}
+function marcaVivo() {
+  const e = D && D.ejecuciones[0];
+  const hora = new Date().toLocaleTimeString("es-GT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  estado(`En vivo · revisado ${hora}` + (e ? ` · última corrida ${e.ts.replace("T", " ")} · semilla ${e.semilla}` : ""), "");
+}
+
+// ------------------------------------------------------------ resumen
+function llenarFiltros() {
+  const llenar = (id, valores, etiqueta) => {
+    const sel = $(id), actual = sel.value;
+    sel.innerHTML = `<option value="">${etiqueta}</option>` + valores.map((v) => `<option ${v === actual ? "selected" : ""}>${esc(v)}</option>`).join("");
+  };
+  const unicos = (k) => [...new Set(D.acciones.map((a) => a[k]))].sort();
+  llenar("f-seg", unicos("segmento"), "Segmento: todos");
+  llenar("f-dep", unicos("departamento"), "Departamento: todos");
+  llenar("f-tipo", TIPOS, "Tipo de acción: todas");
+  $("c-lista").innerHTML = D.acciones.slice(0, 3000).map((a) => `<option value="${a.cliente_id}">`).join("");
+}
+function filtradas() {
+  const s = $("f-seg").value, d = $("f-dep").value, t = $("f-tipo").value;
+  return D.acciones.filter((a) => (!s || a.segmento === s) && (!d || a.departamento === d) && (!t || a.tipo_accion === t));
+}
+function kpi(id, valor, sub) {
+  const el = $(id), v = el.querySelector(".v");
+  if (previos[id] !== undefined && previos[id] !== valor) { el.classList.add("cambio"); setTimeout(() => el.classList.remove("cambio"), 2500); }
+  previos[id] = valor; v.textContent = valor;
+  if (sub !== undefined) el.querySelector(".sub").textContent = sub;
+}
+function dibujarResumen() {
+  if (!D) return;
+  const A = filtradas(), ids = new Set(A.map((a) => a.cliente_id));
+  const of = A.filter((a) => a.tipo_accion === "Oferta");
+  const env = A.filter((a) => a.estado === "enviada").length;
+  const al = D.alertas.filter((x) => ids.has(x.cliente_id));
+  kpi("k-clientes", fmt(A.length), A.length === D.acciones.length ? "toda la cartera" : `de ${fmt(D.acciones.length)}`);
+  kpi("k-oferta", A.length ? pct(of.length / A.length) : "–", `${fmt(of.length)} ofertas activas`);
+  kpi("k-acept", of.length ? pct(of.reduce((s, a) => s + a.prob_aceptacion, 0) / of.length) : "–");
+  kpi("k-riesgo", fmt(A.filter((a) => a.nivel_riesgo === "Alto").length));
+  kpi("k-alertas", fmt(al.length), `${al.filter((x) => x.decision.startsWith("Bloquear")).length} bloqueos`);
+  kpi("k-enviadas", fmt(env), `${fmt(A.length - env)} pendientes`);
+  graficaDiaria(); dona(A); barrasProducto(of); dibujarTabla(); feed();
+}
+// tope de eje redondo y divisible en 4 (p. ej. 400K, 20)
+function redondo(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 1.2, 1.6, 2, 2.4, 3, 4, 5, 6, 8, 10]) if (m * e >= v) return m * e; return 10 * e; }
+function graficaDiaria() {
+  const K = D.kpi_diarios, W = 1200, H = 230, ml = 60, mr = 44, mt = 12, mb = 30, w = W - ml - mr, h = H - mt - mb;
+  const maxM = redondo(Math.max(...K.map((k) => k.monto_total_gtq)) * 1.05), maxA = redondo(Math.max(4, ...K.map((k) => k.alertas_fraude || 0)) * 1.05);
+  const x = (i) => ml + (i + .5) * w / K.length, yM = (v) => mt + h - v / maxM * h, yA = (v) => mt + h - v / maxA * h;
+  let s = `<svg viewBox="0 0 ${W} ${H}">`;
+  for (let i = 0; i <= 4; i++) { const v = maxM * i / 4, y = yM(v);
+    s += `<line x1="${ml}" x2="${W - mr}" y1="${y}" y2="${y}" stroke="#e8ece8"/><text x="${ml - 8}" y="${y + 4}" text-anchor="end">${v >= 1000 ? fmt(v / 1000) + "K" : fmt(v)}</text>`;
+    s += `<text x="${W - mr + 8}" y="${yA(maxA * i / 4) + 4}">${fmt(maxA * i / 4)}</text>`; }
+  const bw = Math.max(2, w / K.length * .7);
+  K.forEach((k, i) => { if (k.alertas_fraude) s += `<rect x="${x(i) - bw / 2}" y="${yA(k.alertas_fraude)}" width="${bw}" height="${mt + h - yA(k.alertas_fraude)}" fill="#00838f"><title>${k.fecha}: ${k.alertas_fraude} alertas</title></rect>`; });
+  s += `<polyline fill="none" stroke="#388e3c" stroke-width="1.8" points="${K.map((k, i) => `${x(i)},${yM(k.monto_total_gtq)}`).join(" ")}"/>`;
+  K.forEach((k, i) => { if (i % 15 === 0) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${fechaCorta(k.fecha)}</text>`; });
+  s += `<text x="14" y="${mt + h / 2}" transform="rotate(-90 14 ${mt + h / 2})" text-anchor="middle">Monto diario (Q)</text>`;
+  $("g-diario").innerHTML = s + "</svg>";
+}
+function dona(A) {
+  const n = A.length || 1, cx = 120, cy = 120, R = 105, r = 58;
+  let ang = -Math.PI / 2, s = `<svg viewBox="0 0 420 240">`;
+  TIPOS.forEach((t) => {
+    const c = A.filter((a) => a.tipo_accion === t).length; if (!c) return;
+    const a2 = ang + c / n * Math.PI * 2 - (c === n ? 1e-4 : 0), g = a2 - ang > Math.PI ? 1 : 0;
+    const p = (rad, a) => `${cx + rad * Math.cos(a)},${cy + rad * Math.sin(a)}`;
+    s += `<path d="M${p(R, ang)} A${R},${R} 0 ${g} 1 ${p(R, a2)} L${p(r, a2)} A${r},${r} 0 ${g} 0 ${p(r, ang)}Z" fill="${COL_TIPO[t]}" stroke="#fff" stroke-width="1.5"><title>${t}: ${c}</title></path>`;
+    if (c / n > .04) { const m = (ang + a2) / 2; s += `<text x="${cx + (R + r) / 2 * Math.cos(m)}" y="${cy + (R + r) / 2 * Math.sin(m) + 4}" text-anchor="middle" style="fill:#fff;font-weight:600">${pct(c / n)}</text>`; }
+    ang = a2;
+  });
+  TIPOS.forEach((t, i) => { const c = A.filter((a) => a.tipo_accion === t).length;
+    s += `<rect x="255" y="${62 + i * 30}" width="13" height="13" rx="3" fill="${COL_TIPO[t]}"/><text x="276" y="${73 + i * 30}" style="fill:#1d2a22;font-size:13px">${t}  ·  ${fmt(c)}</text>`; });
+  $("g-dona").innerHTML = s + "</svg>";
+}
+function barrasProducto(of) {
+  const canales = Object.keys(CANAL);
+  $("ley-canal").innerHTML = canales.map((c) => `<span><i style="background:${COL_CANAL[c]}"></i>${CANAL[c]}</span>`).join("");
+  const prods = {}; of.forEach((a) => { const p = a.producto_nombre || "—"; prods[p] = prods[p] || {}; prods[p][a.canal] = (prods[p][a.canal] || 0) + 1; });
+  const filas = Object.entries(prods).map(([p, c]) => [p, c, Object.values(c).reduce((s, v) => s + v, 0)]).sort((a, b) => b[2] - a[2]);
+  if (!filas.length) { $("g-producto").innerHTML = `<div class="vacio">Sin ofertas con este filtro</div>`; return; }
+  const W = 760, ml = 180, fh = 30, H = filas.length * fh + 30, max = redondo(Math.max(...filas.map((f) => f[2])) * 1.05), w = W - ml - 40;
+  let s = `<svg viewBox="0 0 ${W} ${H}">`;
+  for (let i = 0; i <= 4; i++) { const xv = ml + w * i / 4; s += `<line x1="${xv}" x2="${xv}" y1="0" y2="${H - 24}" stroke="#eef1ee"/><text x="${xv}" y="${H - 8}" text-anchor="middle">${fmt(max * i / 4)}</text>`; }
+  filas.forEach(([p, c, tot], i) => {
+    let x0 = ml; const y = i * fh + 5;
+    s += `<text x="${ml - 10}" y="${y + 15}" text-anchor="end" style="fill:#1d2a22;font-size:12.5px">${esc(p)}</text>`;
+    canales.forEach((k) => { const v = c[k] || 0; if (!v) return; const bw = v / max * w;
+      s += `<rect x="${x0}" y="${y}" width="${bw}" height="20" fill="${COL_CANAL[k]}"><title>${p} · ${CANAL[k]}: ${v}</title></rect>`; x0 += bw; });
+    s += `<text x="${x0 + 6}" y="${y + 15}">${tot}</text>`;
+  });
+  $("g-producto").innerHTML = s + "</svg>";
+}
+function dibujarTabla() {
+  const orden = { Seguridad: 0, Retención: 1, Oferta: 2, Educación: 3 };
+  const A = filtradas().slice().sort((a, b) => (orden[a.tipo_accion] - orden[b.tipo_accion]) || ((b.prob_aceptacion || 0) - (a.prob_aceptacion || 0)));
+  const tam = 10, paginas = Math.max(1, Math.ceil(A.length / tam)); pagina = Math.min(pagina, paginas - 1);
+  $("t-total").textContent = `· ${fmt(A.length)} clientes, en orden de prioridad del motor`;
+  $("t-pag").textContent = `${A.length ? pagina * tam + 1 : 0} – ${Math.min(A.length, (pagina + 1) * tam)} / ${fmt(A.length)}`;
+  $("t-acciones").innerHTML = A.slice(pagina * tam, (pagina + 1) * tam).map((a) => `<tr>
+    <td>${a.cliente_id}</td><td>${esc(a.segmento)}</td><td><span class="chip ${a.tipo_accion}">${a.tipo_accion}</span></td>
+    <td>${esc(a.siguiente_mejor_accion)}</td><td>${a.tipo_accion === "Oferta" ? pct(a.prob_aceptacion) : "–"}</td>
+    <td>${esc(a.regla_decision)}</td><td><span class="chip ${a.estado}">${a.estado}</span></td></tr>`).join("") || `<tr><td colspan="7" class="vacio">Sin clientes con este filtro</td></tr>`;
+}
+function feed() {
+  const ids = D.enviadas.map((e) => e.ts_envio + e.cliente_id);
+  $("feed").innerHTML = (D.enviadas.length ? D.enviadas.map((e, i) => {
+    const nuevo = !primera && !enviadasVistas.has(ids[i]);
+    return `<div class="${nuevo ? "nuevo" : ""}"><b>${e.cliente_id}</b> · <span class="chip ${e.tipo_accion}">${e.tipo_accion}</span><br>${esc(e.descripcion)}<small>${e.ts_envio.replace("T", " ")} · disparador: ${esc(e.disparador)}</small></div>`;
+  }).join("") : `<div class="vacio">Todavía no hay acciones ejecutadas.<br>Corre <code>python automatizacion/flujo_local.py --ahora</code></div>`)
+    + `<p class="nota" style="padding:0 2px">Total registrado en gold_acciones_enviadas: <b>${fmt(D.enviadas_total)}</b></p>`;
+  ids.forEach((x) => enviadasVistas.add(x));
+}
+
+// ------------------------------------------------------------ cliente 360
+async function verCliente() {
+  const id = $("c-id").value.trim().toUpperCase(); if (!id) return;
+  const caja = $("c-cuerpo");
+  try {
+    const r = await fetch(API + "/recomendacion/" + encodeURIComponent(id), { cache: "no-store" });
+    if (r.status === 404) { caja.innerHTML = `<div class="caja vacio">El cliente ${esc(id)} no existe en esta corrida.</div>`; return; }
+    const c = await r.json(), o = c.oferta, p = c.perfil;
+    const al = (D ? D.alertas : []).filter((x) => x.cliente_id === id);
+    const tarjeta = (et, v) => `<div class="kpi"><div class="et">${et}</div><div class="v" style="font-size:25px">${esc(v)}</div></div>`;
+    caja.innerHTML = `
+      <div class="kpis k5">${tarjeta("Segmento", p.segmento)}${tarjeta("Departamento", p.departamento)}${tarjeta("Edad", p.edad)}${tarjeta("Nivel de riesgo", c.nivel_riesgo_abandono)}${tarjeta("Prob. abandono a 60 días", pct(c.prob_abandono_60d, 2))}</div>
+      <div class="kpis k5">${tarjeta("Producto recomendado", o.nombre || "—")}${tarjeta("Prob. aceptación", o.prob_aceptacion != null ? pct(o.prob_aceptacion, 2) : "—")}${tarjeta("Canal óptimo", CANAL[o.canal] || o.canal || "—")}${tarjeta("Hora óptima", o.hora != null ? String(o.hora).padStart(2, "0") + ":00" : "—")}${tarjeta("Estado", c.estado)}</div>
+      <div class="banner ${c.tipo_accion}"><div class="et">Siguiente mejor acción · ${c.tipo_accion}</div><div class="v">${esc(c.siguiente_mejor_accion)}</div></div>
+      <div class="fila f-2-1">
+        <div><h2>Reglas y explicación de la acción</h2><div class="caja"><table><thead><tr><th>Regla de decisión</th><th>Regla de la oferta</th><th>Razón principal del riesgo</th><th>Productos bloqueados</th></tr></thead>
+          <tbody><tr><td>${esc(c.regla_decision)}</td><td>${esc(o.regla_aplicada)}</td><td>${esc(c.razon_abandono)}</td><td>${esc(o.productos_bloqueados || "ninguno")}</td></tr></tbody></table>
+          <p class="nota">Top 3 de productos: ${esc(o.top3 || "—")} · modelo ${esc(c.modelo_version)}</p></div></div>
+        <div><h2>Perfil de uso</h2><div class="caja"><table><tbody>
+          <tr><td>Productos que tiene</td><td><b>${p.n_productos}</b></td></tr><tr><td>Gasto 90 días</td><td><b>Q${fmt(p.gasto_90d_gtq, 2)}</b></td></tr><tr><td>Sesiones app 30 días</td><td><b>${p.sesiones_app_30d}</b></td></tr></tbody></table></div></div>
+      </div>
+      <h2>Alertas de fraude del cliente (últimos 30 días)</h2>
+      <div class="caja"><table><thead><tr><th>Fecha y hora</th><th>Monto (Q)</th><th>País</th><th>Anomalía</th><th>Decisión</th><th>Motivos</th></tr></thead><tbody>
+        ${al.map((x) => `<tr><td>${x.ts.replace("T", " ")}</td><td>${fmt(x.monto_gtq, 2)}</td><td>${x.pais}</td><td>${x.score_anomalia.toFixed(3)}</td><td>${esc(x.decision)}</td><td>${esc(x.motivos)}</td></tr>`).join("") || `<tr><td colspan="6" class="vacio">Sin alertas</td></tr>`}
+      </tbody></table></div>`;
+  } catch (e) { caja.innerHTML = `<div class="caja vacio">No se pudo consultar la API.</div>`; }
+}
+
+// ------------------------------------------------------------ modelos y fraude
+function barrasSimples(datos, color) {
+  const W = 420, ml = 130, fh = 40, H = datos.length * fh + 26, max = Math.max(1, ...datos.map((d) => d[1])) * 1.15, w = W - ml - 40;
+  let s = `<svg viewBox="0 0 ${W} ${H}">`;
+  datos.forEach(([et, v], i) => { const y = i * fh + 6, bw = v / max * w;
+    s += `<text x="${ml - 10}" y="${y + 18}" text-anchor="end" style="fill:#1d2a22;font-size:12.5px">${esc(et)}</text><rect x="${ml}" y="${y}" width="${bw}" height="26" rx="3" fill="${color}"/><text x="${ml + bw + 6}" y="${y + 18}">${fmt(v)}</text>`; });
+  return s + "</svg>";
+}
+function dibujarModelos() {
+  const M = D.metricas, val = (nombre, met) => { const m = M.find((x) => x.nombre === nombre && x.metrica === met); return m ? (+m.valor).toFixed(3) : "–"; };
+  const nombres = [...new Set(M.map((m) => m.nombre))];
+  const nbo = nombres.find((n) => /oferta/i.test(n)), ab = nombres.find((n) => /abandono/i.test(n)), fr = nombres.find((n) => /anomal|fraude/i.test(n));
+  $("m-kpis").innerHTML = [["AUC · siguiente mejor oferta", val(nbo, "auc")], ["Precisión / recall NBO", `${val(nbo, "precision")} / ${val(nbo, "recall")}`],
+    ["AUC · abandono 60 días", val(ab, "auc")], ["AUC · anomalías (fraude)", val(fr, "auc")]]
+    .map(([e, v]) => `<div class="kpi"><div class="et">${e}</div><div class="v">${v}</div></div>`).join("");
+  $("t-metricas").innerHTML = M.filter((m) => ["auc", "precision", "recall", "precision_alertas"].includes(m.metrica))
+    .map((m) => `<tr><td>${esc(m.nombre)}</td><td>${esc(m.algoritmo)}</td><td>${esc(m.version)}</td><td>${esc(m.metrica)}</td><td>${(+m.valor).toFixed(3)}</td></tr>`).join("");
+  const dec = {}; D.alertas.forEach((a) => dec[a.decision] = (dec[a.decision] || 0) + 1);
+  $("g-decision").innerHTML = barrasSimples(Object.entries(dec).sort((a, b) => b[1] - a[1]), "#388e3c");
+  $("g-riesgo").innerHTML = barrasSimples(["Alto", "Medio", "Bajo"].map((n) => [n, D.acciones.filter((a) => a.nivel_riesgo === n).length]), "#00838f");
+  $("t-corridas").innerHTML = D.ejecuciones.map((e) => `<tr><td>${e.ts.replace("T", " ")}</td><td>${e.semilla}</td><td>${fmt(e.clientes)}</td><td>${e.duracion_s} s</td></tr>`).join("")
+    || `<tr><td colspan="4" class="vacio">Sin corridas registradas: corre python pipeline/ejecutar_pipeline.py</td></tr>`;
+  $("t-alertas").innerHTML = D.alertas.slice(0, 10).map((x) => `<tr><td>${x.ts.replace("T", " ")}</td><td>${x.cliente_id}</td><td>${fmt(x.monto_gtq, 2)}</td><td>${x.pais}</td><td>${x.score_anomalia.toFixed(4)}</td><td>${esc(x.decision)}</td><td>${esc(x.motivos)}</td></tr>`).join("");
+}
+
+// /tablero#cliente o /tablero#modelos abre esa pestaña; /tablero#cliente=NB-000123 abre ese cliente
+function abrirDesdeUrl() {
+  const [pag, id] = location.hash.slice(1).split("=");
+  if (id) $("c-id").value = decodeURIComponent(id);
+  const b = document.querySelector(`nav button[data-p="${pag}"]`);
+  if (b) b.click();
+}
+window.addEventListener("hashchange", abrirDesdeUrl);
+revisar().then(abrirDesdeUrl);
+setInterval(revisar, 3000);
+</script>
+</body>
+</html>

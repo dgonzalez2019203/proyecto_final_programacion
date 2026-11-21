@@ -1,0 +1,12 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Datos y modelos generados (se reconstruyen con: python pipeline/ejecutar_pipeline.py)
+data/
+modelos/
+
+# Salidas del flujo de automatización
+automatizacion/salida/
